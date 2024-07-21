@@ -7,11 +7,11 @@ edition = "2021"
 
 [dependencies]
 log = "0.4"
-ash = "0.37"
-wgpu-core = { version = "0.16", features = [ "vulkan" ] }
-wgpu-hal = { version = "0.16", features = [ "vulkan" ] }
-wgpu = "0.16"
-wgpu-types = "0.16"
+ash = "0.38.0"
+wgpu-core = { version = "22", features = [ "vulkan" ] }
+wgpu-hal = { version = "22", features = [ "vulkan" ] }
+wgpu = "22"
+wgpu-types = "22"
 anyhow = "1"
 bitflags = "1"
 

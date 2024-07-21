@@ -25,8 +25,7 @@ use anyhow::Result;
 use bitflags::bitflags;
 
 use ash::{
-    util::read_spv,
-    vk::{self, Handle},
+    util::read_spv, vk::{self, Handle}
 };
 
 use wgpu_hal as hal;
@@ -90,16 +89,16 @@ impl XrShell {
     pub const COLOR_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
     pub const VIEW_TYPE: xr::ViewConfigurationType = xr::ViewConfigurationType::PRIMARY_STEREO;
 
-    fn hal_instance_flags() -> hal::InstanceFlags {
-        let mut flags = hal::InstanceFlags::empty();
+    fn hal_instance_flags() -> wgpu::InstanceFlags {
+        let mut flags = wgpu::InstanceFlags::empty();
         if cfg!(debug_assertions) {
-            flags |= hal::InstanceFlags::VALIDATION;
+            flags |= wgpu::InstanceFlags::VALIDATION;
 
             // WORKAROUND: Requesting the KHR_debug_utils extension on the Oculus Quest fails
             // even though the extension is advertised as being supported!?
             #[cfg(not(target_os = "android"))]
             {
-                flags |= hal::InstanceFlags::DEBUG;
+                flags |= wgpu::InstanceFlags::DEBUG;
             }
         }
         flags
@@ -119,18 +118,19 @@ impl XrShell {
         app_name: &str,
         app_version: u32,
         vk_target_version: u32,
-        hal_instance_flags: hal::InstanceFlags,
+        hal_instance_flags: wgpu::InstanceFlags,
     ) -> Result<(ash::Instance, <hal::api::Vulkan as hal::Api>::Instance)> {
         let entry = unsafe { ash::Entry::load()? };
 
-        let instance_extensions = entry.enumerate_instance_extension_properties(None)?;
+        let instance_extensions = unsafe { entry.enumerate_instance_extension_properties(None)? };
+        // let instance_extensions = unsafe { entry.enumerate_instance_extension_properties(Some(c"VK_KHR_portability_enumeration"))? };
         log::info!(
             "All available Vulkan instance extensions: {:?}",
             instance_extensions
         );
 
         let wgpu_required_instance_extensions =
-            <hal::api::Vulkan as hal::Api>::Instance::required_extensions(
+            <hal::api::Vulkan as hal::Api>::Instance::desired_extensions(
                 &entry,
                 vk::API_VERSION_1_1,
                 hal_instance_flags,
@@ -160,13 +160,12 @@ impl XrShell {
             .chain(xr_required_instance_extensions.iter())
             .copied()
             .collect::<Vec<_>>();
-        let required_extensions_ptrs = wgpu_required_instance_extensions
+        let required_extensions_ptrs = required_extensions
             .iter()
-            .chain(xr_required_instance_extensions.iter())
             .map(|s| s.as_ptr())
             .collect::<Vec<_>>();
 
-        let driver_api_version = match entry.try_enumerate_instance_version() {
+        let driver_api_version = match unsafe { entry.try_enumerate_instance_version() } {
             // Vulkan 1.1+
             Ok(Some(version)) => version,
             Ok(None) => vk::API_VERSION_1_0,
@@ -191,7 +190,7 @@ impl XrShell {
         }
 
         let app_name = CString::new(app_name).unwrap();
-        let app_info = vk::ApplicationInfo::builder()
+        let app_info = vk::ApplicationInfo::default()
             .application_name(app_name.as_c_str())
             .application_version(app_version)
             .engine_name(CStr::from_bytes_with_nul(b"wgpu-hal\0").unwrap())
@@ -199,7 +198,7 @@ impl XrShell {
             .api_version(vk_target_version);
 
         log::debug!("Enumerating Vulkan instance layer properties");
-        let instance_layers = entry.enumerate_instance_layer_properties()?;
+        let instance_layers = unsafe { entry.enumerate_instance_layer_properties()? };
 
         let nv_optimus_layer = CStr::from_bytes_with_nul(b"VK_LAYER_NV_optimus\0").unwrap();
         let has_nv_optimus = instance_layers
@@ -209,7 +208,7 @@ impl XrShell {
         // Check requested layers against the available layers
         let layers = {
             let mut layers: Vec<&'static CStr> = Vec::new();
-            if hal_instance_flags.contains(hal::InstanceFlags::VALIDATION) {
+            if hal_instance_flags.contains(wgpu::InstanceFlags::VALIDATION) {
                 layers.push(CStr::from_bytes_with_nul(b"VK_LAYER_KHRONOS_validation\0").unwrap());
             }
 
@@ -241,7 +240,7 @@ impl XrShell {
                 vk::InstanceCreateFlags::empty()
             };
 
-            let create_info = vk::InstanceCreateInfo::builder()
+            let create_info = vk::InstanceCreateInfo::default()
                 .flags(flags)
                 .application_info(&app_info)
                 .enabled_layer_names(&layer_pointers)
@@ -267,6 +266,7 @@ impl XrShell {
                 vk_instance.clone(),
                 vk_target_version,
                 android_sdk_version,
+                None, // debug_utils_create_info
                 required_extensions,
                 hal_instance_flags,
                 has_nv_optimus,
@@ -330,11 +330,13 @@ impl XrShell {
 
         let wgpu_required_device_extensions =
             hal_adapter.adapter.required_device_extensions(features);
-        let required_device_extensions = xr_required_device_extensions
+        let mut required_device_extensions = xr_required_device_extensions
             .iter()
             .chain(wgpu_required_device_extensions.iter())
             .copied()
             .collect::<Vec<_>>();
+        // WORKAROUND: wgpu always assumes timeline semaphores are enabled
+        required_device_extensions.push(ash::khr::timeline_semaphore::NAME);
 
         let mut enabled_phd_features = hal_adapter
             .adapter
@@ -352,10 +354,9 @@ impl XrShell {
                 }
             })
             .expect("Vulkan device has no graphics queue");
-        let family_info = vk::DeviceQueueCreateInfo::builder()
+        let family_info = vk::DeviceQueueCreateInfo::default()
             .queue_family_index(family_index)
-            .queue_priorities(&[1.0])
-            .build();
+            .queue_priorities(&[1.0]);
         let family_infos = [family_info];
 
         let str_pointers = required_device_extensions
@@ -366,10 +367,10 @@ impl XrShell {
             })
             .collect::<Vec<_>>();
 
-        let pre_info = vk::DeviceCreateInfo::builder()
+        let pre_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&family_infos)
             .enabled_extension_names(&str_pointers);
-        let mut info = enabled_phd_features.add_to_device_create_builder(pre_info);
+        let mut info = enabled_phd_features.add_to_device_create(pre_info);
 
         // WORKAROUND: wgpu_hal 0.16 omits pushing PhysicalDeviceMultiviewFeatures even `with wgt::Features::MULTIVIEW`
         let mut multiview = vk::PhysicalDeviceMultiviewFeatures {
@@ -379,10 +380,16 @@ impl XrShell {
         if features.contains(wgt::Features::MULTIVIEW) {
             info = info.push_next(&mut multiview);
         }
+        // WORKAROUND: wgpu always assumes timeline semaphores are enabled
+        let mut timeline_semaphore = vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR {
+            timeline_semaphore: vk::TRUE,
+            ..Default::default()
+        };
+        info = info.push_next(&mut timeline_semaphore);
 
         let vk_device = {
             vk_instance
-                .create_device(vk_physical_device, &info.build(), None)
+                .create_device(vk_physical_device, &info, None)
                 .unwrap()
         };
 
@@ -392,8 +399,9 @@ impl XrShell {
             .device_from_raw(
                 vk_device.clone(),
                 true,
-                &wgpu_required_device_extensions,
+                &required_device_extensions,
                 features,
+                &wgpu::MemoryHints::Performance, // TODO check this
                 family_info.queue_family_index,
                 0,
             )
@@ -640,8 +648,9 @@ impl XrShell {
                 hal_device,
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features,
-                    limits,
+                    required_features: features,
+                    required_limits: limits,
+                    memory_hints: wgpu::MemoryHints::Performance, // TODO check this is good?
                 },
                 None,
             )?;
@@ -814,12 +823,14 @@ impl App {
             xr_session
                 .wgpu_device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    cache: None, // TODO caching
                     label: None,
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
                         module: &vertex_shader,
                         entry_point: "main",
                         buffers: &[],
+                        compilation_options: Default::default(),
                     },
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleList,
@@ -846,6 +857,7 @@ impl App {
                                 | wgpu::ColorWrites::GREEN
                                 | wgpu::ColorWrites::BLUE,
                         })],
+                        compilation_options: Default::default(),
                     }),
                     multiview: None,
                 });
@@ -1002,10 +1014,12 @@ impl App {
                         b: 0.0,
                         a: 1.0,
                     }),
-                    store: true,
+                    store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
         });
 
         render_pass.set_viewport(
