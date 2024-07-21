@@ -9,15 +9,10 @@
 //!
 
 use std::{
-    collections::HashSet,
-    ffi::{CStr, CString},
-    hash::Hash,
-    io::Cursor,
-    sync::{
+    collections::HashSet, ffi::{CStr, CString}, hash::Hash, io::Cursor, num::NonZeroU32, sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
-    },
-    time::Duration,
+    }, time::Duration
 };
 
 use anyhow::anyhow;
@@ -451,7 +446,8 @@ impl XrShell {
             width: resolution.width,
             height: resolution.height,
             face_count: 1,
-            array_size: 1,
+            // Each swapchain element is an array-of-two: left eye, right eye
+            array_size: 2,
             mip_count: 1,
         })?;
         let swapchain = Arc::new(Mutex::new(handle));
@@ -477,7 +473,8 @@ impl XrShell {
             size: wgpu::Extent3d {
                 width: resolution.width,
                 height: resolution.height,
-                depth_or_array_layers: 1,
+                // Each "texture" is a swapchain entry - two layers, one per eye
+                depth_or_array_layers: 2,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -513,12 +510,13 @@ impl XrShell {
                         let color = wgpu_texture.create_view(&wgpu::TextureViewDescriptor {
                             label: None,
                             format: None,
-                            dimension: None,
+                            dimension: Some(wgpu::TextureViewDimension::D2Array),
                             aspect: wgpu::TextureAspect::All,
                             base_mip_level: 0,
                             mip_level_count: None,
                             base_array_layer: 0,
-                            array_layer_count: None,
+                            // Make the image buffers array-views over both left and right eye
+                            array_layer_count: Some(2),
                         });
 
                         Framebuffer { color }
@@ -859,7 +857,8 @@ impl App {
                         })],
                         compilation_options: Default::default(),
                     }),
-                    multiview: None,
+                    // Render to both eyes in multipass
+                    multiview: Some(NonZeroU32::new(2).unwrap()),
                 });
 
         // Create an action set to encapsulate our actions
@@ -1145,7 +1144,7 @@ impl App {
                         .sub_image(
                             xr::SwapchainSubImage::new()
                                 .swapchain(swapchain)
-                                .image_array_index(0)
+                                .image_array_index(1)
                                 .image_rect(rect),
                         ),
                 ])],
