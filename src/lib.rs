@@ -1002,44 +1002,45 @@ impl App {
             .wgpu_device
             .create_command_encoder(&Default::default());
 
-        let mut render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: None,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.xr_shell.xr_swapchain.buffers[image_index as usize].color,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 1.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        {
+            let mut render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.xr_shell.xr_swapchain.buffers[image_index as usize].color,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 1.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
 
-        render_pass.set_viewport(
-            0_f32,
-            0_f32,
-            self.xr_shell.xr_swapchain.resolution.width as _,
-            self.xr_shell.xr_swapchain.resolution.width as _,
-            0_f32,
-            1_f32,
-        );
-        render_pass.set_scissor_rect(
-            0,
-            0,
-            self.xr_shell.xr_swapchain.resolution.width,
-            self.xr_shell.xr_swapchain.resolution.width,
-        );
+            render_pass.set_viewport(
+                0_f32,
+                0_f32,
+                self.xr_shell.xr_swapchain.resolution.width as _,
+                self.xr_shell.xr_swapchain.resolution.width as _,
+                0_f32,
+                1_f32,
+            );
+            render_pass.set_scissor_rect(
+                0,
+                0,
+                self.xr_shell.xr_swapchain.resolution.width,
+                self.xr_shell.xr_swapchain.resolution.width,
+            );
 
-        render_pass.set_pipeline(&self.wgpu_render_pipeline);
-        render_pass.draw(0..3, 0..1);
-        drop(render_pass);
+            render_pass.set_pipeline(&self.wgpu_render_pipeline);
+            render_pass.draw(0..6, 0..1);
+        }
 
         let command_buffer = command_encoder.finish();
 
