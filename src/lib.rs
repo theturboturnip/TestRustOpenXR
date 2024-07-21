@@ -1128,6 +1128,8 @@ impl App {
             &[&xr::CompositionLayerProjection::new()
                 .space(&self.xr_stage)
                 .views(&[
+                    // TODO use a custom Space here for world-space stuff instead of locking to camera view.
+                    // This information may be used for reprojection.
                     xr::CompositionLayerProjectionView::new()
                         .pose(views[0].pose)
                         .fov(views[0].fov)
