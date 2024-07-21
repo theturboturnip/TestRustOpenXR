@@ -1027,7 +1027,7 @@ impl App {
                 0_f32,
                 0_f32,
                 self.xr_shell.xr_swapchain.resolution.width as _,
-                self.xr_shell.xr_swapchain.resolution.width as _,
+                self.xr_shell.xr_swapchain.resolution.height as _,
                 0_f32,
                 1_f32,
             );
@@ -1035,7 +1035,7 @@ impl App {
                 0,
                 0,
                 self.xr_shell.xr_swapchain.resolution.width,
-                self.xr_shell.xr_swapchain.resolution.width,
+                self.xr_shell.xr_swapchain.resolution.height,
             );
 
             render_pass.set_pipeline(&self.wgpu_render_pipeline);
