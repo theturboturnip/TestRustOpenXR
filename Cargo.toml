@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 log = "0.4"
 ash = "0.37"
+wgpu-core = { version = "0.16", features = [ "vulkan" ] }
 wgpu-hal = { version = "0.16", features = [ "vulkan" ] }
 wgpu = "0.16"
 wgpu-types = "0.16"
@@ -33,7 +34,7 @@ desktop = []
 
 [lib]
 name="main"
-crate_type=["cdylib"]
+crate-type=["cdylib"]
 
 [[bin]]
 path="src/lib.rs"

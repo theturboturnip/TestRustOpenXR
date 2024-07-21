@@ -231,8 +231,18 @@ impl XrShell {
         let vk_instance = {
             let layer_pointers = layers.iter().map(|&s| s.as_ptr()).collect::<Vec<_>>();
 
+            // macOS requires the KhrPortabilityEnumeration and KhrGetPhysicalDeviceProperties2 extensions,
+            // and the ENUMERATE_PORTABILITY_KHR flag. The Meta OpenXR simulator will set the appropriate extensions,
+            // but we need to set the flag.
+            // https://stackoverflow.com/a/78052787
+            let flags = if required_extensions.iter().any(|s| (*s).to_bytes() == c"VK_KHR_portability_enumeration".to_bytes()) {
+                vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
+            } else {
+                vk::InstanceCreateFlags::empty()
+            };
+
             let create_info = vk::InstanceCreateInfo::builder()
-                .flags(vk::InstanceCreateFlags::empty())
+                .flags(flags)
                 .application_info(&app_info)
                 .enabled_layer_names(&layer_pointers)
                 .enabled_extension_names(&required_extensions_ptrs);

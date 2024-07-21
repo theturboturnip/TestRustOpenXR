@@ -634,6 +634,7 @@ dependencies = [
  "log",
  "openxr",
  "wgpu",
+ "wgpu-core",
  "wgpu-hal",
  "wgpu-types",
 ]

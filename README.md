@@ -1,6 +1,6 @@
-This is an example OpenXR application that builds for desktop or
-Android and simply renders a head-locked gradient using Wgpu
-(via Vulkan).
+# TestRustOpenXR
+
+Based on the Rust NDK example <https://github.com/rust-mobile/rust-android-examples/tree/main>.
 
 This borrows heavily from [here](https://github.com/Ralith/openxrs/blob/master/openxr/examples/vulkan.rs) and
 [here](https://github.com/zarik5/openxrs/blob/wgpu-test/openxr/examples/vulkan.rs),
@@ -9,7 +9,7 @@ boilerplate for initializing OpenXR and Vulkan + Wgpu factored
 into a re-usable `XrShell` that could potentially be a helpful
 starting point for building more complex applications.
 
-# Oculus Quest
+## Oculus Quest: Building
 
 To build for the Oculus Quest then you first need to download
 the Oculus OpenXR Mobile SDK from:
@@ -33,14 +33,14 @@ cargo ndk -t arm64-v8a -o app/src/main/jniLibs/ build
 ./gradlew installDebug
 ```
 
-# Oculus Quest: Vulkan Validation Layer
+## Oculus Quest: Vulkan Validation Layer
 
 To enable the Vulkan validation layer on the Oculus Quest run:
 ```
 adb shell setprop debug.oculus.loadandinjectpackagedvvl.co.realfit.naopenxrwgpu 1
 ```
 
-# Desktop
+## Desktop
 
 To build for PC you need to build with the "desktop" feature
 
