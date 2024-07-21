@@ -1,15 +1,5 @@
-//! An example OpenXR application that draws a head-locked gradient using Wgpu,
-//! on top of Vulkan.
-//!
-//! This builds on code from:
-//! https://github.com/Ralith/openxrs/blob/master/openxr/examples/vulkan.rs
-//! and
-//! https://github.com/zarik5/openxrs/blob/wgpu-test/openxr/examples/vulkan.rs
-//! and code from `wgpu_hal::vulkan`
-//!
-
 use std::{
-    collections::HashSet, ffi::{CStr, CString}, hash::Hash, io::Cursor, num::NonZeroU32, sync::{
+    collections::HashSet, ffi::{CStr, CString}, hash::Hash, sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     }, time::Duration
@@ -19,14 +9,17 @@ use anyhow::anyhow;
 use anyhow::Result;
 use bitflags::bitflags;
 
-use ash::{
-    util::read_spv, vk::{self, Handle}
-};
+use ash::
+    vk::{self, Handle}
+;
 
+use game::Game;
 use wgpu_hal as hal;
 use wgpu_types as wgt;
 
 use openxr as xr;
+
+mod game;
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -118,7 +111,6 @@ impl XrShell {
         let entry = unsafe { ash::Entry::load()? };
 
         let instance_extensions = unsafe { entry.enumerate_instance_extension_properties(None)? };
-        // let instance_extensions = unsafe { entry.enumerate_instance_extension_properties(Some(c"VK_KHR_portability_enumeration"))? };
         log::info!(
             "All available Vulkan instance extensions: {:?}",
             instance_extensions
@@ -765,174 +757,24 @@ impl XrShell {
     }
 }
 
-struct App {
+struct App<G: Game> {
     xr_shell: XrShell,
-
-    xr_action_set: xr::ActionSet,
-    xr_left_action: xr::Action<xr::Posef>,
-    xr_right_action: xr::Action<xr::Posef>,
-    xr_left_space: xr::Space,
-    xr_right_space: xr::Space,
-    xr_stage: xr::Space,
-
-    wgpu_render_pipeline: wgpu::RenderPipeline,
+    game: G,
 }
 
-impl App {
+impl<G: Game> App<G> {
     fn new() -> Result<Self> {
         let vk_target_version = vk::make_api_version(0, 1, 1, 0); // Vulkan 1.1 guarantees multiview support
 
         let features = wgpu::Features::SPIRV_SHADER_PASSTHROUGH | wgt::Features::MULTIVIEW;
         let limits = wgt::Limits::default();
 
-        let xr_session = XrShell::new("OpenXR Wgpu", 1, vk_target_version, features, limits)?;
-
-        let vertex_shader = unsafe {
-            xr_session
-                .wgpu_device
-                .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-                    label: None,
-                    source: read_spv(&mut Cursor::new(&include_bytes!("fullscreen.vert.spv")[..]))?
-                        .into(),
-                })
-        };
-        let fragment_shader = unsafe {
-            xr_session
-                .wgpu_device
-                .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-                    label: None,
-                    source: read_spv(&mut Cursor::new(
-                        &include_bytes!("debug_pattern.frag.spv")[..],
-                    ))?
-                    .into(),
-                })
-        };
-
-        let pipeline_layout =
-            xr_session
-                .wgpu_device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: None,
-                    bind_group_layouts: &[],
-                    push_constant_ranges: &[],
-                });
-
-        let wgpu_render_pipeline =
-            xr_session
-                .wgpu_device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    cache: None, // TODO caching
-                    label: None,
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &vertex_shader,
-                        entry_point: "main",
-                        buffers: &[],
-                        compilation_options: Default::default(),
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: None,
-                        unclipped_depth: false,
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        conservative: false,
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        mask: !0x0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &fragment_shader,
-                        entry_point: "main",
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::RED
-                                | wgpu::ColorWrites::GREEN
-                                | wgpu::ColorWrites::BLUE,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    // Render to both eyes in multipass
-                    multiview: Some(NonZeroU32::new(2).unwrap()),
-                });
-
-        // Create an action set to encapsulate our actions
-        let xr_action_set =
-            xr_session
-                .xr_instance
-                .create_action_set("input", "input pose information", 0)?;
-
-        let xr_right_action =
-            xr_action_set.create_action::<xr::Posef>("right_hand", "Right Hand Controller", &[])?;
-        let xr_left_action =
-            xr_action_set.create_action::<xr::Posef>("left_hand", "Left Hand Controller", &[])?;
-
-        // Bind our actions to input devices using the given profile
-        // If you want to access inputs specific to a particular device you may specify a different
-        // interaction profile
-        xr_session
-            .xr_instance
-            .suggest_interaction_profile_bindings(
-                xr_session
-                    .xr_instance
-                    .string_to_path("/interaction_profiles/khr/simple_controller")?,
-                &[
-                    xr::Binding::new(
-                        &xr_right_action,
-                        xr_session
-                            .xr_instance
-                            .string_to_path("/user/hand/right/input/grip/pose")?,
-                    ),
-                    xr::Binding::new(
-                        &xr_left_action,
-                        xr_session
-                            .xr_instance
-                            .string_to_path("/user/hand/left/input/grip/pose")?,
-                    ),
-                ],
-            )?;
-
-        // Attach the action set to the session
-        xr_session
-            .xr_session
-            .attach_action_sets(&[&xr_action_set])
-            .unwrap();
-
-        // Create an action space for each device we want to locate
-        let xr_right_space = xr_right_action.create_space(
-            xr_session.xr_session.clone(),
-            xr::Path::NULL,
-            xr::Posef::IDENTITY,
-        )?;
-        let xr_left_space = xr_left_action.create_space(
-            xr_session.xr_session.clone(),
-            xr::Path::NULL,
-            xr::Posef::IDENTITY,
-        )?;
-
-        // OpenXR uses a couple different types of reference frames for positioning content; we need
-        // to choose one for displaying our content! STAGE would be relative to the center of your
-        // guardian system's bounds, and LOCAL would be relative to your device's starting location.
-        let xr_stage = xr_session
-            .xr_session
-            .create_reference_space(xr::ReferenceSpaceType::STAGE, xr::Posef::IDENTITY)?;
+        let xr_shell = XrShell::new("OpenXR Wgpu", 1, vk_target_version, features, limits)?;
+        let game = G::init(&xr_shell)?;
 
         Ok(Self {
-            xr_shell: xr_session,
-
-            xr_action_set,
-            xr_left_action,
-            xr_right_action,
-            xr_left_space,
-            xr_right_space,
-            xr_stage,
-
-            wgpu_render_pipeline,
+            xr_shell,
+            game,
         })
     }
 
@@ -945,6 +787,8 @@ impl App {
         // Also returns a prediction of when the next frame will be displayed, for use with
         // predicting locations of controllers, viewpoints, etc.
         let frame_state = self.xr_shell.xr_frame_waiter.wait()?;
+
+        self.game.tick_to(&self.xr_shell, frame_state.predicted_display_time);
 
         // Spec: "An application must eventually match each xrWaitFrame call with one call to xrBeginFrame"
         self.xr_shell.xr_frame_stream.begin()?;
@@ -996,113 +840,26 @@ impl App {
             .unwrap()
             .wait_image(xr::Duration::INFINITE)?;
 
-        let mut command_encoder = self
-            .xr_shell
-            .wgpu_device
-            .create_command_encoder(&Default::default());
-
-        {
-            let mut render_pass = command_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.xr_shell.xr_swapchain.buffers[image_index as usize].color,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 1.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-
-            render_pass.set_viewport(
-                0_f32,
-                0_f32,
-                self.xr_shell.xr_swapchain.resolution.width as _,
-                self.xr_shell.xr_swapchain.resolution.height as _,
-                0_f32,
-                1_f32,
-            );
-            render_pass.set_scissor_rect(
-                0,
-                0,
-                self.xr_shell.xr_swapchain.resolution.width,
-                self.xr_shell.xr_swapchain.resolution.height,
-            );
-
-            render_pass.set_pipeline(&self.wgpu_render_pipeline);
-            render_pass.draw(0..6, 0..1);
-        }
-
-        let command_buffer = command_encoder.finish();
-
-        self.xr_shell
-            .xr_session
-            .sync_actions(&[(&self.xr_action_set).into()])
-            .unwrap();
-
-        // Find where our controllers are located in the Stage space
-        let right_location = self
-            .xr_right_space
-            .locate(&self.xr_stage, frame_state.predicted_display_time)
-            .unwrap();
-
-        let left_location = self
-            .xr_left_space
-            .locate(&self.xr_stage, frame_state.predicted_display_time)
-            .unwrap();
-
-        let mut printed = false;
-        if self
-            .xr_left_action
-            .is_active(&self.xr_shell.xr_session, xr::Path::NULL)
-            .unwrap()
-        {
-            print!(
-                "Left Hand: ({:0<12},{:0<12},{:0<12}), ",
-                left_location.pose.position.x,
-                left_location.pose.position.y,
-                left_location.pose.position.z
-            );
-            printed = true;
-        }
-
-        if self
-            .xr_right_action
-            .is_active(&self.xr_shell.xr_session, xr::Path::NULL)
-            .unwrap()
-        {
-            print!(
-                "Right Hand: ({:0<12},{:0<12},{:0<12})",
-                right_location.pose.position.x,
-                right_location.pose.position.y,
-                right_location.pose.position.z
-            );
-            printed = true;
-        }
-        if printed {
-            println!();
-        }
+        let command_buffers = self.game.prepare_render(
+            &self.xr_shell,
+            &self.xr_shell.xr_swapchain.buffers[image_index as usize].color,
+        )?;
 
         // Fetch the view transforms. To minimize latency, we intentionally do this *after*
         // recording commands to render the scene, i.e. at the last possible moment before
         // rendering begins in earnest on the GPU. Uniforms dependent on this data can be sent
         // to the GPU just-in-time by writing them to per-frame host-visible memory which the
         // GPU will only read once the command buffer is submitted.
-        let (_, views) = self.xr_shell.xr_session.locate_views(
+        let (view_flags, views) = self.xr_shell.xr_session.locate_views(
             XrShell::VIEW_TYPE,
             frame_state.predicted_display_time,
-            &self.xr_stage,
+            self.game.xr_stage(),
         )?;
 
-        self.xr_shell.wgpu_queue.submit(Some(command_buffer));
+        self.game.load_view_transforms(view_flags, &views)?;
+
+        self.xr_shell.wgpu_queue.submit(command_buffers);
+
         self.xr_shell
             .xr_swapchain
             .handle
@@ -1125,7 +882,7 @@ impl App {
             frame_state.predicted_display_time,
             self.xr_shell.xr_current_blend_mode,
             &[&xr::CompositionLayerProjection::new()
-                .space(&self.xr_stage)
+                .space(self.game.xr_stage())
                 .views(&[
                     // TODO use a custom Space here for world-space stuff instead of locking to camera view.
                     // This information may be used for reprojection.
@@ -1160,7 +917,7 @@ impl App {
 fn android_main(android_app: AndroidApp) {
     android_logger::init_once(android_logger::Config::default().with_min_level(log::Level::Trace));
 
-    let mut app = App::new().unwrap();
+    let mut app = App::<game::RectViewer>::new().unwrap();
 
     log::trace!("Running mainloop...");
     'mainloop: loop {
@@ -1189,7 +946,7 @@ fn main() -> Result<()> {
         .parse_default_env()
         .init();
 
-    let mut app = App::new().unwrap();
+    let mut app = App::<game::RectViewer>::new().unwrap();
 
     let r = app.xr_shell.quit_signal.clone();
     let _ = ctrlc::set_handler(move || {
