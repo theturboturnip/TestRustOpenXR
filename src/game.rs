@@ -1,9 +1,8 @@
-use core::ffi;
-use std::{io::Cursor, num::NonZeroU32};
+use std::{io::Cursor, num::{NonZero, NonZeroU32}};
 
 use ash::util::read_spv;
 
-use crate::{xr, XrShell};
+use crate::{math::Mat4, xr, XrShell};
 
 use anyhow::Result;
 
@@ -83,7 +82,18 @@ pub(crate) trait Game: Sized {
     type CommandBuffers: IntoIterator<Item = wgpu::CommandBuffer>;
     fn prepare_render(&mut self, xr_shell: &XrShell, target_render_view: &wgpu::TextureView) -> Result<Self::CommandBuffers>;
 
-    fn load_view_transforms(&mut self, view_flags: xr::ViewStateFlags, views: &[xr::View]) -> Result<()>;
+    fn load_view_transforms(&mut self, xr_shell: &XrShell, view_flags: xr::ViewStateFlags, views: &[xr::View]) -> Result<()>;
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Matrices {
+    eye_screen_from_world: [Mat4; 2],
+}
+impl Default for Matrices {
+    fn default() -> Self {
+        Self { eye_screen_from_world: [Mat4::zero(); 2] }
+    }
 }
 
 pub(crate) struct RectViewer {
@@ -98,6 +108,9 @@ pub(crate) struct RectViewer {
     xr_stage: xr::Space,
 
     wgpu_render_pipeline: wgpu::RenderPipeline,
+    // TODO we need more uniform buffers!
+    wgpu_uniform_buffer: wgpu::Buffer,
+    wgpu_uniform_buffer_bind_group: wgpu::BindGroup,
 }
 impl Game for RectViewer {
     fn init(xr_shell: &XrShell) -> Result<Self> {
@@ -122,12 +135,24 @@ impl Game for RectViewer {
                 })
         };
 
+        let bind_group_layout = xr_shell.wgpu_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                count: None,
+            }],
+        });
+
         let pipeline_layout =
             xr_shell
                 .wgpu_device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: None,
-                    bind_group_layouts: &[],
+                    bind_group_layouts: &[
+                        &bind_group_layout,
+                    ],
                     push_constant_ranges: &[],
                 });
 
@@ -174,6 +199,28 @@ impl Game for RectViewer {
                     // Render to both eyes in multipass
                     multiview: Some(NonZeroU32::new(2).unwrap()),
                 });
+
+        let wgpu_uniform_buffer = xr_shell.wgpu_device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: std::mem::size_of::<Matrices>() as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        });
+
+        let wgpu_uniform_buffer_bind_group = xr_shell.wgpu_device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &wgpu_uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                }
+            ],
+        });
 
         // Create an action set to encapsulate our actions
         let xr_action_set =
@@ -248,6 +295,8 @@ impl Game for RectViewer {
             xr_stage,
         
             wgpu_render_pipeline,
+            wgpu_uniform_buffer,
+            wgpu_uniform_buffer_bind_group,
         })
     }
 
@@ -351,14 +400,37 @@ impl Game for RectViewer {
             );
 
             render_pass.set_pipeline(&self.wgpu_render_pipeline);
+            render_pass.set_bind_group(0, &self.wgpu_uniform_buffer_bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
 
         Ok([command_encoder.finish()])
     }
 
-    fn load_view_transforms(&mut self, view_flags: xr::ViewStateFlags, views: &[xr::View]) -> Result<()> {
-        // TODO load the views into a uniform buffer
+    fn load_view_transforms(&mut self, xr_shell: &XrShell, _view_flags: xr::ViewStateFlags, views: &[xr::View]) -> Result<()> {
+        // Load the views into a uniform buffer
+
+        const NEAR_Z: f32 = 0.01;
+        const FAR_Z: f32 = 50.0;
+
+        match xr_shell.wgpu_queue.write_buffer_with(&self.wgpu_uniform_buffer, 0, NonZero::new(std::mem::size_of::<Matrices>() as u64).unwrap()) {
+            Some(mut buf) => {
+                let mut matrices = Matrices::default();
+                for (i, view) in views.iter().enumerate() {
+                    if i >= 2 {
+                        continue;
+                    }
+
+                    let screen_from_view = Mat4::xr_projection_fov(view.fov, NEAR_Z, FAR_Z);
+                    let world_from_view: Mat4 = view.pose.into();
+                    matrices.eye_screen_from_world[i] = screen_from_view * (world_from_view.inverse().unwrap());
+                }
+
+                let bytes = bytemuck::bytes_of(&matrices);
+                buf.as_mut().copy_from_slice(bytes);
+            }
+            None => anyhow::bail!("Couldn't write uniform buffer"),
+        }
         Ok(())
     }
 

@@ -20,6 +20,7 @@ use wgpu_types as wgt;
 use openxr as xr;
 
 mod game;
+mod math;
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -856,7 +857,7 @@ impl<G: Game> App<G> {
             self.game.xr_stage(),
         )?;
 
-        self.game.load_view_transforms(view_flags, &views)?;
+        self.game.load_view_transforms(&self.xr_shell, view_flags, &views)?;
 
         self.xr_shell.wgpu_queue.submit(command_buffers);
 
