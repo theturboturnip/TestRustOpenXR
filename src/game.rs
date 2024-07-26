@@ -2,7 +2,7 @@ use std::{io::Cursor, num::{NonZero, NonZeroU32}};
 
 use ash::util::read_spv;
 
-use crate::{math::Mat4, xr, XrShell};
+use crate::{math::Mat4, xr, shell::XrShell};
 
 use anyhow::Result;
 
