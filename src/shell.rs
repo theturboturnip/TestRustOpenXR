@@ -9,8 +9,8 @@ use anyhow::anyhow;
 use anyhow::Result;
 use bitflags::bitflags;
 
-use ash::
-    vk::{self, Handle}
+use ash::{util::read_spv, 
+    vk::{self, Handle}}
 ;
 
 use wgpu_hal as hal;
@@ -749,5 +749,17 @@ impl XrShell {
         }
 
         Ok(status)
+    }
+
+    pub fn compile_spv(&self, spv_bytes: &[u8]) -> Result<wgpu::ShaderModule> {
+        let shader = unsafe {
+            self.wgpu_device
+                .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
+                    label: None,
+                    source: read_spv(&mut std::io::Cursor::new(spv_bytes))?
+                    .into(),
+                })
+        };
+        Ok(shader)
     }
 }

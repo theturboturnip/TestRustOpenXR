@@ -1,8 +1,6 @@
-use std::{io::Cursor, num::{NonZero, NonZeroU32}};
+use std::num::{NonZero, NonZeroU32};
 
-use ash::util::read_spv;
-
-use crate::{math::Mat4, xr, shell::XrShell};
+use crate::{math::Mat4, shell::XrShell, spv_shader_bytes, xr};
 
 use anyhow::Result;
 
@@ -114,26 +112,8 @@ pub(crate) struct RectViewer {
 }
 impl Game for RectViewer {
     fn init(xr_shell: &XrShell) -> Result<Self> {
-        let vertex_shader = unsafe {
-            xr_shell
-                .wgpu_device
-                .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-                    label: None,
-                    source: read_spv(&mut Cursor::new(&include_bytes!("fullscreen.vert.spv")[..]))?
-                        .into(),
-                })
-        };
-        let fragment_shader = unsafe {
-            xr_shell
-                .wgpu_device
-                .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-                    label: None,
-                    source: read_spv(&mut Cursor::new(
-                        &include_bytes!("debug_pattern.frag.spv")[..],
-                    ))?
-                    .into(),
-                })
-        };
+        let vertex_shader = xr_shell.compile_spv(&spv_shader_bytes!("fullscreen.vert"))?;
+        let fragment_shader = xr_shell.compile_spv(&spv_shader_bytes!("debug_pattern.frag"))?;
 
         let bind_group_layout = xr_shell.wgpu_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
