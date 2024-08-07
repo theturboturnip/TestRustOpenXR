@@ -1,4 +1,4 @@
-use std::num::{NonZero, NonZeroU32};
+use std::{marker::PhantomData, num::{NonZero, NonZeroU32}};
 
 use crate::{controls::{Controls, PointAndClickControls}, math::Mat4, shell::XrShell, spv_shader_bytes, xr};
 
@@ -85,12 +85,105 @@ pub(crate) trait Game: Sized {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Matrices {
+struct Eyes {
     eye_screen_from_world: [Mat4; 2],
 }
-impl Default for Matrices {
+const _: () = assert!(std::mem::size_of::<Eyes>() == 128);
+impl Default for Eyes {
     fn default() -> Self {
         Self { eye_screen_from_world: [Mat4::zero(); 2] }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PerObject {
+    world_from_model: Mat4,
+}
+const _: () = assert!(std::mem::size_of::<PerObject>() == 64);
+
+struct UniformBuffer<T: bytemuck::Pod + bytemuck::Zeroable + Sized> {
+    buffer: wgpu::Buffer,
+    _t: PhantomData<T>,
+}
+impl<T: bytemuck::Pod + bytemuck::Zeroable + Sized> UniformBuffer<T> {
+    const _CHECK_SIZE: () = assert!(std::mem::size_of::<T>() > 0);
+
+    fn create(xr_shell: &XrShell) -> Self {
+        let buffer = xr_shell.wgpu_device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: std::mem::size_of::<T>() as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        });
+        Self { 
+            buffer,
+            _t: PhantomData::default(),
+        }
+    }
+
+    fn overwrite(&self, xr_shell: &XrShell, value: &T) -> Result<()> {
+        match xr_shell.wgpu_queue.write_buffer_with(&self.buffer, 0, NonZero::new(std::mem::size_of::<T>() as u64).unwrap()) {
+            Some(mut buf) => {
+                let bytes = bytemuck::bytes_of(value);
+                buf.as_mut().copy_from_slice(bytes);
+                Ok(())
+            }
+            None => anyhow::bail!("Couldn't write uniform buffer"),
+        }
+    }
+
+    fn buffer(&self) -> &wgpu::Buffer {
+        &self.buffer
+    }
+}
+
+
+/// All meshes right now are rendered with the same shader, which hardcodes a quad
+struct Quad {
+    per_object_uniforms: UniformBuffer<PerObject>,
+    bindings: wgpu::BindGroup,
+}
+
+impl Quad {
+    fn new(xr_shell: &XrShell, bind_group_layout: &wgpu::BindGroupLayout, eye_uniform_buffer: &wgpu::Buffer) -> Self {
+        let per_object_uniforms = UniformBuffer::create(xr_shell);
+        Self {
+            bindings: xr_shell.wgpu_device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: eye_uniform_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: per_object_uniforms.buffer(),
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                ],
+            }),
+            per_object_uniforms,
+        }
+    }
+
+    fn update_uniforms(&self, xr_shell: &XrShell, world_from_model: Mat4) -> Result<()> {
+        self.per_object_uniforms.overwrite(xr_shell, &PerObject {
+            world_from_model
+        })
+    }
+
+    fn enqueue_draw(&self, render_pass: &mut wgpu::RenderPass) {
+        render_pass.set_bind_group(0, &self.bindings, &[]);
+        render_pass.draw(0..6, 0..1);
     }
 }
 
@@ -103,9 +196,8 @@ pub(crate) struct RectViewer {
     controls: PointAndClickControls,
     
     wgpu_render_pipeline: wgpu::RenderPipeline,
-    // TODO we need more uniform buffers!
-    wgpu_uniform_buffer: wgpu::Buffer,
-    wgpu_uniform_buffer_bind_group: wgpu::BindGroup,
+    eye_uniform_buffer: UniformBuffer<Eyes>,
+    meshes: [Quad; 3],
 }
 impl Game for RectViewer {
     fn init(xr_shell: &XrShell) -> Result<Self> {
@@ -114,12 +206,20 @@ impl Game for RectViewer {
 
         let bind_group_layout = xr_shell.wgpu_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
-                count: None,
-            }],
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+            ],
         });
 
         let pipeline_layout =
@@ -177,27 +277,14 @@ impl Game for RectViewer {
                     multiview: Some(NonZeroU32::new(2).unwrap()),
                 });
 
-        let wgpu_uniform_buffer = xr_shell.wgpu_device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: std::mem::size_of::<Matrices>() as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-            mapped_at_creation: false,
-        });
+        let eye_uniform_buffer = UniformBuffer::create(xr_shell);
 
-        let wgpu_uniform_buffer_bind_group = xr_shell.wgpu_device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &wgpu_uniform_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                }
-            ],
-        });
+        let meshes = [
+            Quad::new(xr_shell, &bind_group_layout, eye_uniform_buffer.buffer()),
+            Quad::new(xr_shell, &bind_group_layout, eye_uniform_buffer.buffer()),
+            Quad::new(xr_shell, &bind_group_layout, eye_uniform_buffer.buffer()),
+        ];
+        meshes[0].update_uniforms(xr_shell, Mat4::identity())?;
 
         let controls = PointAndClickControls::new(
             xr_shell, "point_and_click", "Point & Click"
@@ -237,8 +324,8 @@ impl Game for RectViewer {
             xr_stage,
         
             wgpu_render_pipeline,
-            wgpu_uniform_buffer,
-            wgpu_uniform_buffer_bind_group,
+            eye_uniform_buffer,
+            meshes,
         })
     }
 
@@ -258,29 +345,31 @@ impl Game for RectViewer {
         // Find where our controllers are located in the Stage space
         let inputs = self.controls.locate(xr_shell, &self.xr_stage, predicted_display_time).unwrap();
 
-        let mut printed = false;
+        // let mut printed = false;
         if let Some(lh) = inputs.lh {
-            print!(
-                "Left Hand: ({:0<12},{:0<12},{:0<12}), ",
-                lh.point.position.0[0],
-                lh.point.position.0[1],
-                lh.point.position.0[2]
-            );
-            printed = true;
+            self.meshes[1].update_uniforms(xr_shell, lh.point.into()).unwrap();
+            // print!(
+            //     "Left Hand: ({:0<12},{:0<12},{:0<12}), ",
+            //     lh.point.position.0[0],
+            //     lh.point.position.0[1],
+            //     lh.point.position.0[2]
+            // );
+            // printed = true;
         }
 
         if let Some(rh) = inputs.rh {
-            print!(
-                "Right Hand: ({:0<12},{:0<12},{:0<12})",
-                rh.point.position.0[0],
-                rh.point.position.0[1],
-                rh.point.position.0[2]
-            );
-            printed = true;
+            self.meshes[2].update_uniforms(xr_shell, rh.point.into()).unwrap();
+            // print!(
+            //     "Right Hand: ({:0<12},{:0<12},{:0<12})",
+            //     rh.point.position.0[0],
+            //     rh.point.position.0[1],
+            //     rh.point.position.0[2]
+            // );
+            // printed = true;
         }
-        if printed {
-            println!();
-        }
+        // if printed {
+        //     println!();
+        // }
     }
 
     type CommandBuffers = [wgpu::CommandBuffer; 1];
@@ -326,8 +415,9 @@ impl Game for RectViewer {
             );
 
             render_pass.set_pipeline(&self.wgpu_render_pipeline);
-            render_pass.set_bind_group(0, &self.wgpu_uniform_buffer_bind_group, &[]);
-            render_pass.draw(0..6, 0..1);
+            for quad in self.meshes.iter() {
+                quad.enqueue_draw(&mut render_pass);
+            }
         }
 
         Ok([command_encoder.finish()])
@@ -339,25 +429,18 @@ impl Game for RectViewer {
         const NEAR_Z: f32 = 0.01;
         const FAR_Z: f32 = 50.0;
 
-        match xr_shell.wgpu_queue.write_buffer_with(&self.wgpu_uniform_buffer, 0, NonZero::new(std::mem::size_of::<Matrices>() as u64).unwrap()) {
-            Some(mut buf) => {
-                let mut matrices = Matrices::default();
-                for (i, view) in views.iter().enumerate() {
-                    if i >= 2 {
-                        continue;
-                    }
-
-                    let screen_from_view = Mat4::xr_projection_fov(view.fov, NEAR_Z, FAR_Z);
-                    let world_from_view: Mat4 = view.pose.into();
-                    matrices.eye_screen_from_world[i] = screen_from_view * (world_from_view.inverse().unwrap());
-                }
-
-                let bytes = bytemuck::bytes_of(&matrices);
-                buf.as_mut().copy_from_slice(bytes);
+        let mut matrices = Eyes::default();
+        for (i, view) in views.iter().enumerate() {
+            if i >= 2 {
+                continue;
             }
-            None => anyhow::bail!("Couldn't write uniform buffer"),
+
+            let screen_from_view = Mat4::xr_projection_fov(view.fov, NEAR_Z, FAR_Z);
+            let world_from_view: Mat4 = view.pose.into();
+            matrices.eye_screen_from_world[i] = screen_from_view * (world_from_view.inverse().unwrap());
         }
-        Ok(())
+
+        self.eye_uniform_buffer.overwrite(xr_shell, &matrices)
     }
 
     fn xr_stage<'a>(&'a self) -> &'a openxr::Space {
