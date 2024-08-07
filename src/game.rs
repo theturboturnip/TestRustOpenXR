@@ -1,6 +1,6 @@
 use std::num::{NonZero, NonZeroU32};
 
-use crate::{math::Mat4, shell::XrShell, spv_shader_bytes, xr};
+use crate::{controls::{Controls, PointAndClickControls}, math::Mat4, shell::XrShell, spv_shader_bytes, xr};
 
 use anyhow::Result;
 
@@ -98,13 +98,10 @@ pub(crate) struct RectViewer {
     time: TimeTracker,
     delta_real_time: f32,
 
-    xr_action_set: xr::ActionSet,
-    xr_left_action: xr::Action<xr::Posef>,
-    xr_right_action: xr::Action<xr::Posef>,
-    xr_left_space: xr::Space,
-    xr_right_space: xr::Space,
     xr_stage: xr::Space,
 
+    controls: PointAndClickControls,
+    
     wgpu_render_pipeline: wgpu::RenderPipeline,
     // TODO we need more uniform buffers!
     wgpu_uniform_buffer: wgpu::Buffer,
@@ -202,59 +199,28 @@ impl Game for RectViewer {
             ],
         });
 
-        // Create an action set to encapsulate our actions
-        let xr_action_set =
-            xr_shell
-                .xr_instance
-                .create_action_set("input", "input pose information", 0)?;
-
-        let xr_right_action =
-            xr_action_set.create_action::<xr::Posef>("right_hand", "Right Hand Controller", &[])?;
-        let xr_left_action =
-            xr_action_set.create_action::<xr::Posef>("left_hand", "Left Hand Controller", &[])?;
+        let controls = PointAndClickControls::new(
+            xr_shell, "point_and_click", "Point & Click"
+        )?;
 
         // Bind our actions to input devices using the given profile
         // If you want to access inputs specific to a particular device you may specify a different
         // interaction profile
-        xr_shell
-            .xr_instance
-            .suggest_interaction_profile_bindings(
-                xr_shell
-                    .xr_instance
-                    .string_to_path("/interaction_profiles/khr/simple_controller")?,
-                &[
-                    xr::Binding::new(
-                        &xr_right_action,
-                        xr_shell
-                            .xr_instance
-                            .string_to_path("/user/hand/right/input/grip/pose")?,
-                    ),
-                    xr::Binding::new(
-                        &xr_left_action,
-                        xr_shell
-                            .xr_instance
-                            .string_to_path("/user/hand/left/input/grip/pose")?,
-                    ),
-                ],
-            )?;
+        for interaction_binding in controls.suggested_bindings(&xr_shell.xr_instance)? {
+            xr_shell
+                .xr_instance
+                .suggest_interaction_profile_bindings(
+                    xr_shell
+                        .xr_instance
+                        .string_to_path(interaction_binding.0)?,
+                    &interaction_binding.1
+                )?;
+        }
 
         // Attach the action set to the session
         xr_shell
             .xr_session
-            .attach_action_sets(&[&xr_action_set])
-            .unwrap();
-
-        // Create an action space for each device we want to locate
-        let xr_right_space = xr_right_action.create_space(
-            xr_shell.xr_session.clone(),
-            xr::Path::NULL,
-            xr::Posef::IDENTITY,
-        )?;
-        let xr_left_space = xr_left_action.create_space(
-            xr_shell.xr_session.clone(),
-            xr::Path::NULL,
-            xr::Posef::IDENTITY,
-        )?;
+            .attach_action_sets(&[&controls.action_set()])?;
 
         // OpenXR uses a couple different types of reference frames for positioning content; we need
         // to choose one for displaying our content! STAGE would be relative to the center of your
@@ -267,11 +233,7 @@ impl Game for RectViewer {
             time: Default::default(),
             delta_real_time: 0.0,
 
-            xr_action_set,
-            xr_left_action,
-            xr_right_action,
-            xr_left_space,
-            xr_right_space,
+            controls,
             xr_stage,
         
             wgpu_render_pipeline,
@@ -290,45 +252,29 @@ impl Game for RectViewer {
 
         xr_shell
             .xr_session
-            .sync_actions(&[(&self.xr_action_set).into()])
+            .sync_actions(&[self.controls.action_set().into()])
             .unwrap();
 
         // Find where our controllers are located in the Stage space
-        let right_location = self
-            .xr_right_space
-            .locate(&self.xr_stage, predicted_display_time)
-            .unwrap();
-
-        let left_location = self
-            .xr_left_space
-            .locate(&self.xr_stage, predicted_display_time)
-            .unwrap();
+        let inputs = self.controls.locate(xr_shell, &self.xr_stage, predicted_display_time).unwrap();
 
         let mut printed = false;
-        if self
-            .xr_left_action
-            .is_active(&xr_shell.xr_session, xr::Path::NULL)
-            .unwrap()
-        {
+        if let Some(lh) = inputs.lh {
             print!(
                 "Left Hand: ({:0<12},{:0<12},{:0<12}), ",
-                left_location.pose.position.x,
-                left_location.pose.position.y,
-                left_location.pose.position.z
+                lh.point.position.0[0],
+                lh.point.position.0[1],
+                lh.point.position.0[2]
             );
             printed = true;
         }
 
-        if self
-            .xr_right_action
-            .is_active(&xr_shell.xr_session, xr::Path::NULL)
-            .unwrap()
-        {
+        if let Some(rh) = inputs.rh {
             print!(
                 "Right Hand: ({:0<12},{:0<12},{:0<12})",
-                right_location.pose.position.x,
-                right_location.pose.position.y,
-                right_location.pose.position.z
+                rh.point.position.0[0],
+                rh.point.position.0[1],
+                rh.point.position.0[2]
             );
             printed = true;
         }

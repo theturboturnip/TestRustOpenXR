@@ -10,6 +10,7 @@ use wgpu_types as wgt;
 use openxr as xr;
 
 mod game;
+mod controls;
 mod math;
 mod shell;
 use shell::{PollStatus, XrShell};

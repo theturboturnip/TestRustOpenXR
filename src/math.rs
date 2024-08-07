@@ -4,7 +4,7 @@ use cgmath::{self, SquareMatrix};
 /// Two-component vector, byte-compatible with bytemuck, cgmath, and openxr.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vec2([f32; 2]);
+pub struct Vec2(pub [f32; 2]);
 impl From<cgmath::Vector2<f32>> for Vec2 {
     fn from(value: cgmath::Vector2<f32>) -> Self {
         Self(value.into())
@@ -32,7 +32,7 @@ impl From<Vec2> for xr::Vector2f {
 /// Three-component vector, byte-compatible with bytemuck, cgmath, and openxr.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vec3([f32; 3]);
+pub struct Vec3(pub [f32; 3]);
 impl From<cgmath::Vector3<f32>> for Vec3 {
     fn from(value: cgmath::Vector3<f32>) -> Self {
         Self(value.into())
@@ -88,10 +88,27 @@ impl From<Quat> for xr::Quaternionf {
     }
 }
 
+/// Non-scaled translation+rotation orientation, byte-compatible with bytemuck and openxr::Posef.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Pose {
+    pub position: Vec3,
+    pub orientation: Quat,
+}
+impl From<xr::Posef> for Pose {
+    fn from(value: xr::Posef) -> Self {
+        Self {
+            position: value.position.into(),
+            orientation: value.orientation.into(),
+        }
+    }
+}
+
+
 /// Four-by-four column-major matrix, byte-compatible with bytemuck, cgmath, and openxr.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Mat4([[f32; 4]; 4]);
+pub struct Mat4(pub [[f32; 4]; 4]);
 impl Mat4 {
     pub const fn zero() -> Self {
         Self([[0.0; 4]; 4])
@@ -198,6 +215,11 @@ impl From<Mat4> for cgmath::Matrix4<f32> {
 impl From<xr::Posef> for Mat4 {
     fn from(value: xr::Posef) -> Self {
         Self::from_translation_rotation(value.position.into(), value.orientation.into())
+    }
+}
+impl From<Pose> for Mat4 {
+    fn from(value: Pose) -> Self {
+        Self::from_translation_rotation(value.position, value.orientation)
     }
 }
 impl From<Quat> for Mat4 {
