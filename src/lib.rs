@@ -14,8 +14,6 @@ mod controls;
 mod math;
 mod shell;
 use shell::{PollStatus, XrShell};
-#[macro_use]
-mod shaders;
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;

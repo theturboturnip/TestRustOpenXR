@@ -1,8 +1,9 @@
 use std::{marker::PhantomData, num::{NonZero, NonZeroU32}};
 
-use crate::{controls::{Controls, PointAndClickControls}, math::{Mat4, Pose}, shell::XrShell, spv_shader_bytes, xr};
+use crate::{controls::{Controls, PointAndClickControls}, math::{Mat4, Pose}, shell::XrShell, xr};
 
 use anyhow::Result;
+use wgpu::include_spirv_raw;
 
 #[derive(Debug, Clone, Copy)]
 struct TimeTracker {
@@ -201,8 +202,14 @@ pub(crate) struct RectViewer {
 }
 impl Game for RectViewer {
     fn init(xr_shell: &XrShell) -> Result<Self> {
-        let vertex_shader = xr_shell.compile_spv(&spv_shader_bytes!("fullscreen.vert"))?;
-        let fragment_shader = xr_shell.compile_spv(&spv_shader_bytes!("debug_pattern.frag"))?;
+        let vertex_shader = unsafe {
+            xr_shell.wgpu_device
+                .create_shader_module_spirv(&include_spirv_raw!("shaders/spv/fullscreen.vert.spv"))
+        };
+        let fragment_shader = unsafe {
+            xr_shell.wgpu_device
+                .create_shader_module_spirv(&include_spirv_raw!("shaders/spv/debug_pattern.frag.spv"))
+        };
 
         let bind_group_layout = xr_shell.wgpu_device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
