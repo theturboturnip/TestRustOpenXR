@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, num::{NonZero, NonZeroU32}};
 
-use crate::{controls::{Controls, PointAndClickControls}, math::Mat4, shell::XrShell, spv_shader_bytes, xr};
+use crate::{controls::{Controls, PointAndClickControls}, math::{Mat4, Pose}, shell::XrShell, spv_shader_bytes, xr};
 
 use anyhow::Result;
 
@@ -284,7 +284,7 @@ impl Game for RectViewer {
             Quad::new(xr_shell, &bind_group_layout, eye_uniform_buffer.buffer()),
             Quad::new(xr_shell, &bind_group_layout, eye_uniform_buffer.buffer()),
         ];
-        meshes[0].update_uniforms(xr_shell, Mat4::identity())?;
+        meshes[0].update_uniforms(xr_shell, Mat4::from_translation([0.0, 0.0, -2.0]))?;
 
         let controls = PointAndClickControls::new(
             xr_shell, "point_and_click", "Point & Click"
@@ -345,31 +345,13 @@ impl Game for RectViewer {
         // Find where our controllers are located in the Stage space
         let inputs = self.controls.locate(xr_shell, &self.xr_stage, predicted_display_time).unwrap();
 
-        // let mut printed = false;
         if let Some(lh) = inputs.lh {
-            self.meshes[1].update_uniforms(xr_shell, lh.point.into()).unwrap();
-            // print!(
-            //     "Left Hand: ({:0<12},{:0<12},{:0<12}), ",
-            //     lh.point.position.0[0],
-            //     lh.point.position.0[1],
-            //     lh.point.position.0[2]
-            // );
-            // printed = true;
+            self.meshes[1].update_uniforms(xr_shell, lh.point.posed_from_local() * Mat4::scale(0.1)).unwrap();
         }
 
         if let Some(rh) = inputs.rh {
-            self.meshes[2].update_uniforms(xr_shell, rh.point.into()).unwrap();
-            // print!(
-            //     "Right Hand: ({:0<12},{:0<12},{:0<12})",
-            //     rh.point.position.0[0],
-            //     rh.point.position.0[1],
-            //     rh.point.position.0[2]
-            // );
-            // printed = true;
+            self.meshes[2].update_uniforms(xr_shell, rh.point.posed_from_local() * Mat4::scale(0.1)).unwrap();
         }
-        // if printed {
-        //     println!();
-        // }
     }
 
     type CommandBuffers = [wgpu::CommandBuffer; 1];
@@ -436,8 +418,14 @@ impl Game for RectViewer {
             }
 
             let screen_from_view = Mat4::xr_projection_fov(view.fov, NEAR_Z, FAR_Z);
-            let world_from_view: Mat4 = view.pose.into();
-            matrices.eye_screen_from_world[i] = screen_from_view * (world_from_view.inverse().unwrap());
+
+            // view.pose() is the position and orientation of the view in world space.
+            // Thus the "posed" space = world space, and the "local" space = view space.
+            // => view_from_world = <local>_from_<posed>.
+            let view_pose_in_world: Pose = view.pose.into();
+            let view_from_world = view_pose_in_world.local_from_posed();
+
+            matrices.eye_screen_from_world[i] = screen_from_view * view_from_world;
         }
 
         self.eye_uniform_buffer.overwrite(xr_shell, &matrices)

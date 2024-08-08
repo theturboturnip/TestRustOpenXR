@@ -1,3 +1,30 @@
+//! Linear math for games.
+//! 
+//! Assumes the world and eye-relative coordinate spaces are OpenXR i.e.
+//! up      = +Y
+//! right   = +X
+//! forward = -Z
+//! 
+//! and that the projection coordinate space is Vulkan i.e.
+//! up      = -Y
+//! right   = +X
+//! forward = -Z
+//! 
+//! Matrices are stored column-major, like OpenXR, Vulkan, [cgmath], and glTF.
+//! Matrices use the x_from_y naming convention throughout to avoid transformation headaches.
+//! See <https://www.sebastiansylvan.com/post/matrix_naming_convention>.
+//! 
+//! Using the same "world" coordinate space and matrix order as OpenXR
+//! allows the vector, quaternion, pose, and matrix structures to be byte-for-byte compatible with OpenXR.
+//! All Vulkan shader math should also assume the "world" coordinate space,
+//! as the projection matrix calculated from OpenXR parameters (see [Mat4::xr_projection_fov] and [Mat4::xr_projection_tan])
+//! automatically include the Y-flip to transform world to projection space.
+//! 
+//! Imported glTF meshes may need to have a 180deg rotation around Y applied, as the glTF coordinate system has X and Z flipped:
+//! up      = +Y
+//! right   = -X
+//! forward = +Z
+
 use crate::xr;
 use cgmath::{self, SquareMatrix};
 
@@ -28,6 +55,11 @@ impl From<Vec2> for xr::Vector2f {
         }
     }
 }
+impl From<[f32; 2]> for Vec2 {
+    fn from(value: [f32; 2]) -> Self {
+        Self(value)
+    }
+}
 
 /// Three-component vector, byte-compatible with bytemuck, cgmath, and openxr.
 #[repr(C)]
@@ -55,6 +87,11 @@ impl From<Vec3> for xr::Vector3f {
             y: value.0[1],
             z: value.0[2],
         }
+    }
+}
+impl From<[f32; 3]> for Vec3 {
+    fn from(value: [f32; 3]) -> Self {
+        Self(value)
     }
 }
 
@@ -95,6 +132,14 @@ pub struct Pose {
     pub position: Vec3,
     pub orientation: Quat,
 }
+impl Pose {
+    pub fn posed_from_local(self) -> Mat4 {
+        self.into()
+    }
+    pub fn local_from_posed(self) -> Mat4 {
+        self.posed_from_local().inverse().unwrap()
+    }
+}
 impl From<xr::Posef> for Pose {
     fn from(value: xr::Posef) -> Self {
         Self {
@@ -121,10 +166,22 @@ impl Mat4 {
             [0.0, 0.0, 0.0, 1.0],
         ])
     }
-    pub fn from_translation(v: Vec3) -> Mat4 {
+    pub const fn scale(scale: f32) -> Self {
+        Self([
+            [scale, 0.0, 0.0, 0.0],
+            [0.0, scale, 0.0, 0.0],
+            [0.0, 0.0, scale, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+    }
+    pub fn from_translation(v: impl Into<Vec3>) -> Mat4 {
+        let v = v.into();
         cgmath::Matrix4::from_translation(v.into()).into()
     }
-    pub fn from_translation_rotation(trans: Vec3, rot: Quat) -> Mat4 {
+    pub fn from_translation_rotation(trans: impl Into<Vec3>, rot: impl Into<Quat>) -> Mat4 {
+        let trans = trans.into();
+        let rot = rot.into();
+
         let quat: cgmath::Quaternion<f32> = rot.into();
 
         let x2 = quat.v.x + quat.v.x;
@@ -183,21 +240,25 @@ impl Mat4 {
         // Set to zero for a [0,1] Z clip space (Vulkan / D3D / Metal).
         let offset_z: f32 = 0.0;
 
+        // Set to 1 (no y flipping) for renderers with (+Y = up) coordinate spaces.
+        // Set to -1 (flip y coordinates) for renderers with (+Y = down) coordinate spaces i.e. Vulkan.
+        let y_flip: f32 = -1.0;
+
         if far_z <= near_z {
             // place the far plane at infinity
             cgmath::Matrix4::new(
-                2.0/tan_width, 0.0, 0.0, 0.0,
-                0.0, 2.0/tan_height, 0.0, 0.0,
-                (tan_right + tan_left) / tan_width, (tan_up + tan_down) / tan_height, -1.0, -1.0,
-                0.0, 0.0, -(near_z + offset_z), 0.0
+                2.0/tan_width, y_flip * 0.0, 0.0, 0.0,
+                0.0, y_flip * 2.0/tan_height, 0.0, 0.0,
+                (tan_right + tan_left) / tan_width, y_flip * (tan_up + tan_down) / tan_height, -1.0, -1.0,
+                0.0, y_flip * 0.0, -(near_z + offset_z), 0.0
             ).into()
         } else {
             // normal projection
             cgmath::Matrix4::new(
-                2.0/tan_width, 0.0, 0.0, 0.0,
-                0.0, 2.0/tan_height, 0.0, 0.0,
-                (tan_right + tan_left) / tan_width, (tan_up + tan_down) / tan_height, -(far_z + offset_z) / (far_z - near_z), -1.0,
-                0.0, 0.0, -(far_z * (near_z + offset_z)) / (far_z - near_z), 0.0
+                2.0/tan_width, y_flip * 0.0, 0.0, 0.0,
+                0.0, y_flip * 2.0/tan_height, 0.0, 0.0,
+                (tan_right + tan_left) / tan_width, y_flip * (tan_up + tan_down) / tan_height, -(far_z + offset_z) / (far_z - near_z), -1.0,
+                0.0, y_flip * 0.0, -(far_z * (near_z + offset_z)) / (far_z - near_z), 0.0
             ).into()
         }
     }
@@ -214,7 +275,7 @@ impl From<Mat4> for cgmath::Matrix4<f32> {
 }
 impl From<xr::Posef> for Mat4 {
     fn from(value: xr::Posef) -> Self {
-        Self::from_translation_rotation(value.position.into(), value.orientation.into())
+        Self::from_translation_rotation(value.position, value.orientation)
     }
 }
 impl From<Pose> for Mat4 {

@@ -88,7 +88,7 @@
 %gl_VertexIndex = OpVariable %_ptr_Input_int Input
 %_ptr_Function_v2float = OpTypePointer Function %v2float
   %float_0_5 = OpConstant %float 0.5
-   %float_n2 = OpConstant %float -2
+    %float_0 = OpConstant %float 0
 %_ptr_Output_v4float = OpTypePointer Output %v4float
 %_ptr_Output_v2float = OpTypePointer Output %v2float
          %xy = OpVariable %_ptr_Output_v2float Output
@@ -109,7 +109,7 @@
          %52 = OpVectorTimesScalar %v2float %50 %float_0_5
          %54 = OpCompositeExtract %float %52 0
          %55 = OpCompositeExtract %float %52 1
-         %56 = OpCompositeConstruct %v4float %54 %55 %float_n2 %float_1
+         %56 = OpCompositeConstruct %v4float %54 %55 %float_0 %float_1
          %57 = OpMatrixTimesVector %v4float %45 %56
          %59 = OpAccessChain %_ptr_Output_v4float %_ %int_0
                OpStore %59 %57

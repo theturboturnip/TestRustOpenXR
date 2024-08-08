@@ -16,6 +16,6 @@ void main() {
         vec2(-1, -1), vec2(1, -1), vec2(1, 1),
         vec2(-1, -1), vec2(1, 1), vec2(-1, 1)
     );
-    gl_Position = eye_screen_from_world[gl_ViewIndex] * world_from_model * vec4(vertices[gl_VertexIndex] * 0.5,-2,1);
+    gl_Position = eye_screen_from_world[gl_ViewIndex] * world_from_model * vec4(vertices[gl_VertexIndex] * 0.5,0,1);
     xy = (vertices[gl_VertexIndex] + 1) / 2;
 }
