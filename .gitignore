@@ -16,3 +16,6 @@ local.properties
 /target
 
 *.log
+
+# For large assets e.g. from renderpeople.com
+downloads

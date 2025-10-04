@@ -1,3 +1,7 @@
+I believe I forked this from somewhere but I can't find where.
+If the git blame for a line is from the initial commit, it's probably not my work.
+Everything else is!
+
 # TestRustOpenXR
 
 Based on the Rust NDK example <https://github.com/rust-mobile/rust-android-examples/tree/main>.
@@ -45,3 +49,35 @@ adb shell setprop debug.oculus.loadandinjectpackagedvvl.co.realfit.naopenxrwgpu 
 To build for PC you need to build with the "desktop" feature
 
 `cargo run --features=desktop`
+
+### Linux Dependencies
+
+Tested on Debian 12
+
+**For the engine**
+
+- `glslc`
+- `spirv-tools`
+- `libopenxr-dev libopenxr-loader1 libopenxr-utils`
+
+**For building the OpenXR crate**
+
+- `libxcb-glx0-dev`
+
+**For building the OpenXR SDK manually, which you shouldn't have to do**
+
+The following set of Debian/Ubuntu packages provides all required libs for building for xlib or xcb with OpenGL and Vulkan support.
+
+- `build-essential`
+- `cmake` (of _somewhat_ recent vintage, 3.10+ known working)
+- `libgl1-mesa-dev`
+- `libvulkan-dev`
+- `libx11-xcb-dev`
+- `libxcb-dri2-0-dev`
+- `libxcb-glx0-dev`
+- `libxcb-icccm4-dev`
+- `libxcb-keysyms1-dev`
+- `libxcb-randr0-dev`
+- `libxrandr-dev`
+- `libxxf86vm-dev`
+- `mesa-common-dev`
