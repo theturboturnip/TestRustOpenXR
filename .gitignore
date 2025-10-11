@@ -19,3 +19,5 @@ local.properties
 
 # For large assets e.g. from renderpeople.com
 downloads
+# For per-env configuration
+.env

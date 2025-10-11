@@ -1,10 +1,22 @@
+set dotenv-load
+
 default:
     @just --list
 
-run:
+prepare-android:
+    rustup target add aarch64-linux-android
+    cargo install cargo-ndk
+
+run-quest:
+    cargo ndk -t arm64-v8a -o app/src/main/jniLibs/ build
+    ./gradlew build
+    ./gradlew installDebug
+    adb shell setprop debug.oculus.loadandinjectpackagedvvl.co.realfit.naopenxrwgpu 1
+
+run-local:
     cargo run --features=desktop
 
-run-log:
+run-local-log:
     cargo run --features=desktop 2>&1 | tee just-run.log
 
 compile-shader name:
