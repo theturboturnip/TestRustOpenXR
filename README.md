@@ -58,7 +58,7 @@ Tested on Debian 12
 
 - `glslc`
 - `spirv-tools`
-- `libopenxr-dev libopenxr-loader1 libopenxr-utils`
+- `libopenxr-dev libopenxr-loader1 libopenxr-utils openxr-layer-corevalidation`
 
 **For building the OpenXR crate**
 
